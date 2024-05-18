@@ -1,0 +1,453 @@
+---
+title: "Project"
+author: "Riya"
+date: "2023-04-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(plyr)
+library(gridExtra)
+library(corrplot)
+library(caret)
+library(car)
+library(lmtest)
+library(klaR)
+library(tree)
+library(randomForest)
+library(gbm)
+library(glmnet)
+library(boot)
+library(ROCR)
+library(caret)
+library(Metrics)
+library(MLmetrics)
+```
+
+Dataset
+```{r}
+TelcoCustomerChurn <- read.csv("TelcoCustomerChurn.csv")
+TelcoCustomerChurn <- na.omit(TelcoCustomerChurn) #removes null values
+sapply(TelcoCustomerChurn, function(x) sum(is.na(x))) #to check if there are any null values
+```
+
+```{r}
+# Eliminating this column for easier analysis 
+TelcoCustomerChurn$customerID <- NULL
+
+#Changing datatype
+TelcoCustomerChurn$TotalCharges<- as.numeric(TelcoCustomerChurn$TotalCharges)
+```
+
+
+```{r}
+# Converting Senior Citizen values to No and Yes for descriptive analysis
+TelcoCustomerChurn$SeniorCitizen <- as.factor(mapvalues(TelcoCustomerChurn$SeniorCitizen,
+                                          from=c("0","1"),
+                                          to=c("No", "Yes")))
+```
+
+```{r}
+# Recoding "No phone service" and "No internet service" to "No"
+TelcoCustomerChurn$MultipleLines <- as.factor(mapvalues(TelcoCustomerChurn$MultipleLines, from=c("No phone service"),to=c("No")))
+
+TelcoCustomerChurn$OnlineSecurity <- as.factor(mapvalues(TelcoCustomerChurn$OnlineSecurity, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$OnlineBackup <- as.factor(mapvalues(TelcoCustomerChurn$OnlineBackup, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$DeviceProtection <- as.factor(mapvalues(TelcoCustomerChurn$DeviceProtection, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$TechSupport <- as.factor(mapvalues(TelcoCustomerChurn$TechSupport, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$StreamingTV <- as.factor(mapvalues(TelcoCustomerChurn$StreamingTV, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$StreamingMovies <- as.factor(mapvalues(TelcoCustomerChurn$StreamingMovies, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+```
+
+```{r}
+#Converting categorical variables to factors
+TelcoCustomerChurn <- TelcoCustomerChurn %>%
+  mutate_if(is.character, as.factor) %>%
+  mutate_if(is.logical, as.factor) 
+```
+
+```{r}
+# Running logistics regression model with full data
+full.model <- glm(Churn ~.,data=TelcoCustomerChurn,family = binomial(link=logit))
+summary(full.model)
+
+c("2LL" = -2 * logLik(full.model), 
+  "Deviance" = deviance(full.model), 
+  "AIC" = AIC(full.model))
+
+# Transforming Coefficients
+log.odds <- coef(full.model) # To get just the coefficients
+odds <- exp(coef(full.model)) 
+prob <- odds / (1 + odds) # To convert odds to probabilities
+round(cbind("Log-Odds" = log.odds, 
+            "Odds" = odds, 
+            "Probabilities" = prob), # All together
+      digits = 3)
+
+# Confidence intervals
+# To get the 95% confidence intervals of Log-Odds coefficients
+round(confint(full.model) , digits = 3)
+
+# (Log-Odds^e) -- the 95% confidence interval of odds
+round(exp(confint(full.model)), digits = 3)
+```
+
+```{r,warning=FALSE}
+#Check for multicollinearity 
+cond.index(full.model,data = TelcoCustomerChurn) 
+```
+
+```{r}
+#VIF the result weird-initial.model
+vif(full.model)
+```
+
+```{r}
+#Check for serial correlation (# no serial correlation)
+dwtest(full.model)
+plot(full.model)
+```
+
+```{r}
+# Model Specification 1: Predictors selected based on business knowledge 
+# MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+#              OnlineSecurity + DeviceProtection + StreamingMovies + tenure
+
+#Model Specification 2: Variable Selection: Stepwise
+fit.null <- glm(Churn ~ 1, data = TelcoCustomerChurn, family= binomial(link=logit))
+scope = list(lower = fit.null, upper = full.model)
+fit.step <- step(full.model, scope = list(lower=fit.null, upper=full.model), 
+                 direction = "both", test = "F")
+summary(fit.step)
+
+#SeniorCitizen + tenure + MultipleLines + InternetService + 
+#                     StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+#                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges
+
+#Model Specification 3: Lasso Regression
+options(scipen = 4)
+a <- model.matrix(Churn ~ ., data = TelcoCustomerChurn)[, -1]
+b <- TelcoCustomerChurn$Churn 
+# Lasso Logit model
+lasso.logit <- glmnet(a, b, alpha = 1, family = "binomial")
+set.seed(1)
+lasso.logit.cv10 <- cv.glmnet(a, b, alpha = 1, family = "binomial")
+lasso.best.lambda <- lasso.logit.cv10$lambda.min
+min.cv.lasso <- min(lasso.logit.cv10$cvm)
+cbind("Best Lambda" = lasso.best.lambda,
+      "Best Log Lambda" = log(lasso.best.lambda), "Best 10FCV" = min.cv.lasso)
+lasso.coef <- coef(lasso.logit, s = lasso.best.lambda)
+lasso.coef.0 <- coef(lasso.logit, s = 0)
+all.coefs <- round(cbind(lasso.coef, exp(lasso.coef), lasso.coef.0, exp(lasso.coef.0)),digits = 3)
+colnames(all.coefs) <- c("Best LASSO", "Odds", "0-Lambda LASSO", "0dds")
+all.coefs
+#SeniorCitizen + MultipleLines + InternetService + OnlineSecurity + OnlineBackup + DeviceProtection +
+#TechSupport + StreamingTV + StreamingMovies + Contract + PaperlessBilling + PaymentMethod
+```
+
+
+```{r}
+# Model 1: Logistic Regression
+# Model specification 1 
+logit.model1 <- glm(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data=TelcoCustomerChurn, family = binomial(link=logit))
+summary(logit.model1)
+
+c("2LL" = -2 * logLik(logit.model1), 
+  "Deviance" = deviance(logit.model1), 
+  "AIC" = AIC(logit.model1))
+
+# Transforming Coefficients
+log.odds <- coef(logit.model1) # To get just the coefficients
+odds <- exp(coef(logit.model1)) 
+prob <- odds / (1 + odds) # To convert odds to probabilities
+round(cbind("Log-Odds" = log.odds, 
+            "Odds" = odds, 
+            "Probabilities" = prob), # All together
+      digits = 3)
+
+# Confidence intervals
+# To get the 95% confidence intervals of Log-Odds coefficients
+round(confint(logit.model1) , digits = 3)
+
+# (Log-Odds^e) -- the 95% confidence interval of odds
+round(exp(confint(logit.model1)), digits = 3)
+```
+
+```{r}
+#ANOVA 
+null.model <- glm(Churn ~ 1, data = TelcoCustomerChurn, family= binomial(link=logit))
+anova(null.model, logit.model1, test = "Chisq")
+```
+
+
+```{r,warning=FALSE}
+#Check for multicollinearity 
+cond.index(logit.model1, data = TelcoCustomerChurn)
+```
+
+```{r}
+#VIF
+vif(logit.model1)
+```
+
+
+```{r}
+#Model 1
+# Model Specification 2: 
+logit.model2 <- glm(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges,
+             data=TelcoCustomerChurn, family = binomial(link=logit))
+summary(logit.model2)
+
+# Transforming Coefficients
+log.odds <- coef(logit.model2) # To get just the coefficients
+odds <- exp(coef(logit.model2)) 
+prob <- odds / (1 + odds) # To convert odds to probabilities
+round(cbind("Log-Odds" = log.odds, 
+            "Odds" = odds, 
+            "Probabilities" = prob), # All together
+      digits = 3)
+
+# Confidence intervals
+# To get the 95% confidence intervals of Log-Odds coefficients
+round(confint(logit.model2) , digits = 3)
+
+# (Log-Odds^e) -- the 95% confidence interval of odds
+round(exp(confint(logit.model2)), digits = 3)
+```
+
+```{r, warning=FALSE}
+#Check for multicollinearity 
+cond.index(logit.model2, data = TelcoCustomerChurn)
+
+#VIF
+vif(logit.model2)
+```
+
+```{r}
+# Model 2: Ridge Regression 
+# Model Specification 1
+options(scipen = 4)
+x <- model.matrix(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data = TelcoCustomerChurn)[, -1]
+y <- TelcoCustomerChurn$Churn 
+
+# Ridge Logit model
+ridge.logit <- glmnet(x, y, alpha = 0, family = "binomial")
+plot(ridge.logit)
+
+#Cross-validation using 10FCV
+set.seed(1)
+ridge.logit.cv10 <- cv.glmnet(x, y, alpha = 0, family = "binomial", measure.type="class")
+round(cbind("Lambda" = ridge.logit.cv10$lambda, "10FCV Deviance" = ridge.logit.cv10$cvm), digits = 3)
+plot(ridge.logit.cv10)
+
+# Tuning the model
+ridge.best.lambda <- ridge.logit.cv10$lambda.min
+min.cv.ridge <- min(ridge.logit.cv10$cvm)
+round(
+ cbind("Best Lambda" = ridge.best.lambda,
+ "Best Log(Lambda)" = log(ridge.best.lambda),
+ "Best 10FCV Deviance" = min.cv.ridge),
+ digits = 3)
+
+# Comparing Coefficients
+ridge.coef <- coef(ridge.logit, s = ridge.best.lambda)
+ridge.coef.0 <- coef(ridge.logit, s = 0)
+all.coefs <- round(cbind(ridge.coef, exp(ridge.coef), ridge.coef.0, exp(ridge.coef.0)), digits = 3)
+colnames(all.coefs) <- c("Best Ridge", "Odds", "0-Lambda Ridge", "0dds")
+all.coefs
+```
+
+```{r}
+# Model 2: Ridge Regression
+# Model Specification 2
+options(scipen = 4)
+x2 <- model.matrix(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges, 
+                  data = TelcoCustomerChurn)[, -1]
+y2 <- TelcoCustomerChurn$Churn 
+
+# Ridge Logit model
+ridge.logit2 <- glmnet(x2, y2, alpha = 0, family = "binomial")
+ridge.logit2
+plot(ridge.logit2)
+
+#Cross-validation using 10FCV
+set.seed(1)
+ridge.logit2.cv10 <- cv.glmnet(x2, y2, alpha = 0, family = "binomial")
+round(cbind("Lambda" = ridge.logit2.cv10$lambda, "10FCV Deviance" = ridge.logit2.cv10$cvm), digits = 5)
+plot(ridge.logit.cv10)
+
+# Tuning the model
+ridge.best.lambda2 <- ridge.logit2.cv10$lambda.min
+min.cv.ridge2 <- min(ridge.logit2.cv10$cvm)
+round(
+ cbind("Best Lambda" = ridge.best.lambda2,
+ "Best Log(Lambda)" = log(ridge.best.lambda2),
+ "Best 10FCV Deviance" = min.cv.ridge2),
+ digits = 5)
+
+# Comparing Coefficients
+ridge.coef2 <- coef(ridge.logit2, s = ridge.best.lambda2)
+ridge2.coef.0 <- coef(ridge.logit2, s = 0)
+all.coefs2 <- round(cbind(ridge.coef2, exp(ridge.coef2), ridge2.coef.0, exp(ridge2.coef.0)), digits = 5)
+colnames(all.coefs2) <- c("Best Ridge", "Odds", "0-Lambda Ridge", "0dds")
+all.coefs2
+```
+
+```{r}
+# Model 3: Random Forest Classification Tree
+#Model Specification 1
+set.seed(1)
+Churn.rf1 <- randomForest(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data = TelcoCustomerChurn, mtry = 2, importance = T)
+Churn.rf1
+plot(Churn.rf1) 
+legend(x = "topright", 
+       c("Positives", "All", "Negatives"), 
+       fill = c("green", "black", "red" ))
+
+#Variable Importance Plot
+varImpPlot(Churn.rf1, type = 2, 
+           main = "Bagging Tree with TelcoCustomerChurn Data") 
+importance(Churn.rf1, type = 2)
+```
+
+```{r}
+# Model 3: Random Forest 
+#Model Specification 2
+set.seed(1)
+Churn.rf2 <- randomForest(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges, 
+               data = TelcoCustomerChurn, mtry = 2, importance = T)
+Churn.rf2
+plot(Churn.rf2) 
+legend(x = "topright", 
+       c("Positives", "All", "Negatives"), 
+       fill = c("green", "black", "red" ))
+
+#Variable Importance Plot
+varImpPlot(Churn.rf2, type = 2, 
+           main = "Bagging Tree with TelcoCustomerChurn Data") 
+importance(Churn.rf2, type = 2)
+```
+
+Cross-Validation nusing 10FCV and caret package
+
+```{r}
+# model 1: Logistic Regression
+# Specification 1 
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+logit.model1.caret.10FCV <- train(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data = TelcoCustomerChurn, method = "glm", family = "binomial", trControl = ctrl)
+logit.model1.caret.10FCV
+logit.model1.caret.10FCV$results
+```
+
+```{r}
+# Model 1: Logistic Regression
+# Model Specification 2
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = twoClassSummary)
+logit.model2.caret.10FCV <- train(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges, 
+                      data = TelcoCustomerChurn, method = "glm", family = "binomial", trControl = ctrl)
+logit.model2.caret.10FCV
+logit.model2.caret.10FCV$results
+```
+
+```{r}
+# Model 2: Ridge Regression
+# Model Specification 1
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+ridge.model1.caret.10FCV <- train(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data = TelcoCustomerChurn, method = "glmnet", trControl = ctrl, 
+               tuneGrid = expand.grid(alpha = 0, lambda = ridge.best.lambda))
+ridge.model1.caret.10FCV
+```
+
+
+```{r}
+#Model 2: Ridge Regression
+# Model Specification 2
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+ridge.model2.caret.10FCV <- train(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges, 
+               data = TelcoCustomerChurn, method = "glmnet", trControl = ctrl, 
+               tuneGrid = expand.grid(alpha = 0, lambda = ridge.best.lambda))
+ridge.model2.caret.10FCV
+```
+
+```{r}
+# Model 3: Random Forest Classification tree
+# Model Specification 1
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+rf.model1.caret.10FCV <- train(Churn ~ MonthlyCharges + Contract + SeniorCitizen + TechSupport + 
+               OnlineSecurity + DeviceProtection + StreamingMovies + tenure, 
+               data = TelcoCustomerChurn, method = "rf", trControl = ctrl)
+rf.model1.caret.10FCV
+rf.model1.caret.10FCV$results
+```
+
+```{r}
+# Model 3: Random Forest Classification tree
+# Model Specification 2
+#summaryFunction = prSummary for AUC; twoClassSummary for Sens/Spec
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = twoClassSummary)
+rf.model2.caret.10FCV <- train(Churn ~ SeniorCitizen + tenure + MultipleLines + InternetService + 
+                      StreamingTV + TechSupport + StreamingMovies + Contract + OnlineSecurity +
+                      PaperlessBilling + PaymentMethod + MonthlyCharges + TotalCharges, 
+               data = TelcoCustomerChurn, method = "rf", trControl = ctrl)
+rf.model2.caret.10FCV
+summary(rf.model2.caret.10FCV)
+```
+

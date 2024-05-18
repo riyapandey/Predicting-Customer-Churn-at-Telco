@@ -1,0 +1,323 @@
+---
+title: "ITEC 621 Project - TelcoCustomerChurn Customer Churn"
+author: "Riya Pandey"
+date: "2023-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(plyr)
+library(gridExtra)
+library(corrplot)
+library(caret)
+library(car)
+library(fastDummies)
+library(lmtest)
+library(klaR)
+```
+
+Dataset
+```{r}
+TelcoCustomerChurn <- read.csv("TelcoCustomerChurn.csv")
+
+TelcoCustomerChurn <- na.omit(TelcoCustomerChurn) #removes null values
+#sapply(TelcoCustomerChurn, function(x) sum(is.na(x))) #to check if there are any null values
+sum(duplicated(TelcoCustomerChurn)) #check for duplicated values
+```
+
+```{r}
+# Eliminating this column for easier analysis 
+TelcoCustomerChurn$customerID <- NULL
+```
+
+```{r}
+# Converting Senior Citizen values to No and Yes for descriptive analysis
+TelcoCustomerChurn$SeniorCitizen <- as.factor(mapvalues(TelcoCustomerChurn$SeniorCitizen,
+                                          from=c("0","1"),
+                                          to=c("No", "Yes")))
+```
+
+```{r}
+# Recoding "No phone service" and "No internet service" to "No"
+TelcoCustomerChurn$MultipleLines <- as.factor(mapvalues(TelcoCustomerChurn$MultipleLines, 
+                                           from=c("No phone service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$OnlineSecurity <- as.factor(mapvalues(TelcoCustomerChurn$OnlineSecurity, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$OnlineBackup <- as.factor(mapvalues(TelcoCustomerChurn$OnlineBackup, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$DeviceProtection <- as.factor(mapvalues(TelcoCustomerChurn$DeviceProtection, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$TechSupport <- as.factor(mapvalues(TelcoCustomerChurn$TechSupport, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$StreamingTV <- as.factor(mapvalues(TelcoCustomerChurn$StreamingTV, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+
+TelcoCustomerChurn$StreamingMovies <- as.factor(mapvalues(TelcoCustomerChurn$StreamingMovies, 
+                                           from=c("No internet service"),
+                                           to=c("No")))
+```
+
+4.1 Descriptive Statistics
+```{r}
+summary(TelcoCustomerChurn$tenure)
+summary(TelcoCustomerChurn$MonthlyCharges)
+summary(TelcoCustomerChurn$TotalCharges)
+```
+
+4.2 Distribution of Key Variables
+
+```{r}
+# Create a histogram of the "tenure" variable
+ggplot(TelcoCustomerChurn, aes(x = tenure)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(x = "Tenure (in months)", y = "Count", 
+       title = "Distribution of Tenure in Telco Customer Churn Data")
+
+# Create a density plot of the "tenure" variable
+ggplot(TelcoCustomerChurn, aes(x = tenure)) +
+  geom_density(color = "black", fill = "lightblue") +
+  labs(x = "Tenure (in months)", y = "Density", 
+       title = "Density Plot of Tenure in Telco Customer Churn Data")
+```
+```{r}
+# Create a histogram of the "MonthlyCharges" variable
+ggplot(TelcoCustomerChurn, aes(x = MonthlyCharges)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightpink") +
+  labs(x = "Tenure (in months)", y = "Count", 
+       title = "Distribution of Tenure in Telco Customer Churn Data")
+
+# Create a density plot of the "MonthlyCharges" variable
+ggplot(TelcoCustomerChurn, aes(x = MonthlyCharges)) +
+  geom_density(color = "black", fill = "lightpink") +
+  labs(x = "Tenure (in months)", y = "Density", 
+       title = "Density Plot of Tenure in Telco Customer Churn Data")
+```
+
+
+
+```{r}
+# Looking at out predictor variable - Churn
+ggplot(TelcoCustomerChurn, aes(x = Churn)) +
+  geom_bar(aes(fill = Churn), position = position_dodge(width = 0.9)) +
+  geom_text(aes(label = paste0(round(prop.table(after_stat(count)), 4) * 100, '%')),
+            stat = 'count', position = position_dodge(width = 0.9), vjust = -0.5) +
+labs(y = "Number of Customers")
+
+```
+
+
+```{r}
+OnlineSec <- ggplot(TelcoCustomerChurn, aes(x = TechSupport)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(title="Customer Churn by Tech Support", y="Count")
+
+InternetSer <- ggplot(TelcoCustomerChurn, aes(x = OnlineSecurity)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(title="Customer Churn by Online Security", y="Count")
+
+Inter <- ggplot(TelcoCustomerChurn, aes(x = DeviceProtection)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(title="Customer Churn by Device Protection", y="Count")
+
+Ser <- ggplot(TelcoCustomerChurn, aes(x = StreamingMovies)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(title="Customer Churn by Streaming Movies", y="Count")
+  
+grid.arrange(OnlineSec, InternetSer, Inter, Ser, ncol = 2)
+```
+
+```{r}
+# Service Type
+# Phone Service
+phone_svc <- ggplot(TelcoCustomerChurn, aes(x = PhoneService)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+# Multiple Lines
+mult_lines <- ggplot(TelcoCustomerChurn, aes(x = MultipleLines)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+# Internet service
+int_svc <- ggplot(TelcoCustomerChurn, aes(x = InternetService)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+# Online Security
+online_sec <- ggplot(TelcoCustomerChurn, aes(x = OnlineSecurity)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+# Online Backup
+online_back <- ggplot(TelcoCustomerChurn, aes(x = OnlineBackup)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+  
+
+#Device Protection
+dev_protec <- ggplot(TelcoCustomerChurn, aes(x = DeviceProtection)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+
+#Tech Support
+tech_supp <- ggplot(TelcoCustomerChurn, aes(x = TechSupport)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+
+#Streaming TV
+stream_TV <- ggplot(TelcoCustomerChurn, aes(x = StreamingTV)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+
+#Streaming Movies
+stream_movies <- ggplot(TelcoCustomerChurn, aes(x = StreamingMovies)) +
+  geom_bar(aes(fill = Churn), alpha = 0.6) +
+  labs(y="Count")
+
+#Plot demographic data within a grid
+grid.arrange(phone_svc, online_sec, mult_lines, int_svc,
+             online_back, dev_protec, tech_supp, stream_TV, 
+             stream_movies, ncol = 3)
+```
+
+```{r}
+# Customer Account Information
+#Contract
+contract <- ggplot(TelcoCustomerChurn, aes(x = Contract, fill = Churn)) +
+  geom_bar(position = position_dodge(), alpha = 0.6) +
+  labs(title = "Customer Churn on Contract", y="Count")
+
+#Paperless Billing
+paperless <- ggplot(TelcoCustomerChurn, aes(x = PaperlessBilling, fill = Churn)) +
+  geom_bar(position = position_dodge(), alpha = 0.6) +
+  labs(title = "Customer Churn on Paperless Billing", y="Count")
+
+#Payment Method
+pmt_method <- ggplot(TelcoCustomerChurn, aes(x = PaymentMethod, fill = Churn)) +
+  geom_bar(position = position_dodge(), alpha = 0.6) +
+  labs(title = "Customer Churn on Payment Method", y="Count")
+
+#Plot demographic data within a grid
+grid.arrange(contract, paperless, pmt_method, ncol = 1)
+
+```
+
+```{r}
+#Monthly Charges and Churn
+churned_data <- TelcoCustomerChurn %>% 
+  filter(Churn == "Yes")
+ggplot(churned_data, aes(x = MonthlyCharges)) +
+  geom_histogram(fill = "blue", color = "black") +
+  labs(x = "Monthly Charges", y = "Number of Churned Customers",
+       title = "Monthly Charges for Churned Customers")
+```
+The histogram above shows that there is a concentration of churned customers with higher monthly charges, which suggests that this variable could be a factor in affecting churn. To further investigate, we can create a box-plot comparing Monthly Charges for churned vs non-churned customers:
+
+```{r}
+ggplot(TelcoCustomerChurn, aes(x = Churn, y = MonthlyCharges, fill = Churn)) +
+  geom_boxplot() +
+  labs(x = "Churn", y = "Monthly Charges",
+       title = "Monthly Charges by Churn Status")
+```
+We can see from the box plot that the meidan Monthly Charges for churned customers is higher than that of non-churned customers, which further suggests that this variable could be a factor affecting churn.
+
+```{r}
+# Tenure
+ten <- ggplot(TelcoCustomerChurn, aes(x = Churn, y = tenure, fill = Churn)) +
+  geom_boxplot() +
+  labs(x = "Churn", y = "tenure",
+       title = "tenure by Churn")
+
+# MonthlyCharges
+month_char <- ggplot(TelcoCustomerChurn, aes(x = Churn, y = MonthlyCharges, fill = Churn)) +
+  geom_boxplot() +
+  labs(x = "Churn", y = "MonthlyCharges",
+       title = "Monthly Charges by Churn")
+
+grid.arrange(ten, month_char, ncol = 2)
+```
+The observations we can see are: The median tenure for customers who have left is around 10 months. Customers who who have churned, have high monthly charges, the median is above 75. The median Total charges of customers who have churned is low.
+
+
+```{r}
+# Monthly Charges vs Total Charges
+ggplot(data = TelcoCustomerChurn, aes(x = MonthlyCharges, y = TotalCharges, color = Churn)) +
+  geom_point() +
+  labs(x = "Monthly Charges", y = "Total Charges", color = "Churn") +
+  ggtitle("Relationship between Monthly Charges and Total Charges by Churn")
+```
+We can see from the scatter plot that there is a cluster of customers in the bottom left of the plot who have low total charges and low monhtly charges. Most of these customers are in the no churn category, indicating that customers with lower charges are less likely to churn. We can also see from the plot that many customers who churned had relatively high monthly charges and low total charges, which could indicate that they were dissatisfied with the services provided by the TelcoCustomerChurn company.
+
+```{r}
+# Monthly Charges vs Tenure
+ggplot(TelcoCustomerChurn, aes(x = tenure, y = MonthlyCharges, color = Churn)) +
+  geom_point() +
+  labs(x = "Tenure", y = "Monthly Charges",
+       title = "Monthly Charges vs. Tenure")
+```
+The scatter plot above suggests that customers who have churned tend to have higher monthly charges and lower tenure than those who have not churned. This indicates that customers who have been with TelcoCustomerChurn for a longer time and have lower monthly charges are less likely to churn. To reduce churn, TelcoCustomerChurn could consider implementing strategies to retain long-term customers and potentially offering promotions or incentives to customers with higher monthly charges to encourage them to stay.
+
+```{r}
+#Total charges vs tenure
+ggplot(TelcoCustomerChurn, aes(x = tenure, y = TotalCharges, color = Churn)) +
+  geom_point() +
+  labs(x = "Tenure", y = "Total Charges",
+       title = "Total Charges vs. Tenure")
+```
+From this plot, we can see that customers who have churned tend to be clustered in the lower-left corner of the plot, indicating that they have lower tenure and lower Total Charges. On the other hand, customers who have not churned tend to be scattered throughout the plot, indicating that they have a wider range of values for Tenure and Total Charges.
+Therefore, we can conclude that both Tenure and Total Charges are important factors in predicting customer churn in TelcoCustomerChurn. To reduce churn, TelcoCustomerChurn should focus on retaining customers with low tenure and low Total Charges by offering incentives or discounts to encourage them to stay with the company.
+Descriptive
+```{r}
+summary(TelcoCustomerChurn$tenure)
+
+summary(TelcoCustomerChurn$TotalCharges)
+```
+```{r}
+summary(TelcoCustomerChurn$MonthlyCharges)
+```
+
+
+4.3 Correlation and Co-Variation Analysis
+```{r}
+# Correlation of numeric variables
+cor_cols <- TelcoCustomerChurn[, c("tenure", "MonthlyCharges", "TotalCharges")]
+corrplot(cor(cor_cols), method = "number", order = "hclust") 
+```
+From the output, we can see that there is a strong positive correlation between tenure and TotalCharges(0.83), indicating that customers who have been with the company for longer tend to have higher total charges. There is also a moderate positive correlation between MonthlyCharges and TotalCharges (0.65), indicating that customers who pay higher monthly charges tend to have higher total charges. The correlation between tenure and MonthlyCharges is 0.25, which seems to be weak which means that as the tenure of a customer increases, their monthly charges may also increase slightly.
+
+```{r}
+# ANOVA
+AOV_tenure <- summary(aov(tenure ~ Churn, data = TelcoCustomerChurn))
+AOV_monthly <-summary(aov(MonthlyCharges ~ Churn, data = TelcoCustomerChurn))
+AOV_total <- summary(aov(TotalCharges ~ Churn, data = TelcoCustomerChurn))
+AOV_tenure
+AOV_monthly
+AOV_total
+```
+
+
+
